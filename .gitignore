@@ -15,6 +15,11 @@ __pycache__/
 *.pyc
 .env
 
+# Presentation drafts (prompt, exported decks)
+docs/presentation/
+*.pptx
+*.key
+
 # Runtime artifacts
 runs/
 uploads/
