@@ -327,6 +327,49 @@ def _machine_after(clip: video.Clip, sc: scene_mod.Scene, run: list[dict], check
     return isinstance(r, dict) and bool(r.get("notes_put_into_machine"))
 
 
+HELD_GROUND_PROMPT = ("This is a crop of a bank cashier. Locate the object she is holding in her hands. Reply in "
+                      "JSON {\"bbox_2d\": [x1, y1, x2, y2]} with coordinates relative 0-1000 of this image.")
+HELD_SCHEMA = {"type": "object", "properties": {"object": {"type": "string", "enum": [
+    "banknotes", "id_card_or_passport", "phone_or_phone_case", "plastic_card", "document_or_receipt",
+    "envelope_or_bag", "cup_or_food", "nothing", "other"]}}, "required": ["object"]}
+HELD_PROMPT = ("Close-up crops (several moments) of the object in a bank cashier's hands. Classify it. "
+               "banknotes = several thin flexible printed paper notes held as a stack or fan, coloured print with "
+               "patterns, edges of multiple sheets visible, sheets bend. id_card_or_passport = one rigid card with a "
+               "small photo of a face and text (identity card), or a passport booklet; a single item, not a stack. "
+               "phone_or_phone_case = one thick rigid slab with rounded corners, may have a camera bump or a case. "
+               "plastic_card = a single small rigid bank card without a face photo. document_or_receipt = white paper "
+               "with text. Reply in JSON.")
+
+
+def _held_object(clip: video.Clip, person_box, tc: float) -> tuple[str | None, tuple | None]:
+    """Ground the object in the cashier's hands, then classify a tight close-up of it."""
+    import re
+    h, w = clip.frames[0].shape[:2]
+    bw, bh = person_box[2] - person_box[0], person_box[3] - person_box[1]
+    x0, y0 = max(0, person_box[0] - 0.1 * bw), max(0, person_box[1] - 0.05 * bh)
+    x1, y1 = min(w, person_box[2] + 0.1 * bw), min(h, person_box[3] + 0.05 * bh)
+    person = _crop(clip.frames[clip.index_at(tc)], person_box, pad=0.1, side=640, pad_y=0.05)
+    obj_box = None
+    try:
+        raw = vlm.ask([person], HELD_GROUND_PROMPT, max_side=640, num_predict=40)
+        nums = [float(x) for x in re.findall(r"-?\d+(?:\.\d+)?", str(raw))][:4]
+        if len(nums) == 4 and nums[2] > nums[0] and nums[3] > nums[1]:
+            cw, ch = x1 - x0, y1 - y0
+            obj_box = (x0 + nums[0] / 1000 * cw, y0 + nums[1] / 1000 * ch,
+                       x0 + nums[2] / 1000 * cw, y0 + nums[3] / 1000 * ch)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("held-object grounding failed: %s", exc)
+    box = obj_box or person_box
+    pad = 0.6 if obj_box else 0.0
+    crops = [_crop(clip.frames[clip.index_at(tc + d)], box, pad=pad, side=448) for d in (-0.5, 0.0, 0.5)]
+    try:
+        r = vlm.ask(crops, HELD_PROMPT, schema=HELD_SCHEMA, max_side=448, num_predict=20)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("held-object check failed: %s", exc)
+        return None, obj_box
+    return (r.get("object") if isinstance(r, dict) else None), obj_box
+
+
 def _from_hands(clip: video.Clip, sc: scene_mod.Scene, hands: list[dict], checks: list | None = None,
                 dets: list | None = None) -> list[Event]:
     dets = dets or [[] for _ in clip.frames]
@@ -345,6 +388,19 @@ def _from_hands(clip: video.Clip, sc: scene_mod.Scene, hands: list[dict], checks
         if _machine_after(clip, sc, run, checks):
             continue  # pre-count by hand, then the machine: normal practice
         mid = run[len(run) // 2]
+        # Is it really money? Close-up of the held object at two moments; any "banknotes" keeps the run
+        # (on the open set this removed phone/card/document runs without losing a single true violation).
+        votes, obj_boxes = [], {}
+        for h in (mid, run[max(0, len(run) // 2 - 1)]):
+            if not h.get("box"):
+                continue
+            kind, ob = _held_object(clip, h["box"], h["t"])
+            votes.append(kind)
+            if ob is not None:
+                obj_boxes[h["t"]] = ob
+        checks.append({"check": "held_object", "t": mid["t"], "votes": votes})
+        if votes and "banknotes" not in votes:
+            continue
         t = mid["t"]
         score = min(0.95, 0.5 + 0.12 * len(run))
         ev.append(Event(
@@ -352,7 +408,9 @@ def _from_hands(clip: video.Clip, sc: scene_mod.Scene, hands: list[dict], checks
             observation="Кассир пересчитывает банкноты вручную, перелистывая купюры пальцами; счётно-сортировальная "
                         "машина при этом не используется.",
             evidence_t=[t, run[0]["t"], run[-1]["t"]],
-            boxes={t: _box_list(mid.get("box"))}, source="vlm"))
+            boxes={t: ([(int(obj_boxes[t][0]), int(obj_boxes[t][1]), int(obj_boxes[t][2]), int(obj_boxes[t][3]),
+                         "купюры")] if t in obj_boxes else _box_list(mid.get("box")))},
+            source="cv+vlm"))
     def detector_sees(labels: tuple, run: list[dict], min_frames: int = 2) -> bool:
         """Corroborate a VLM run with RT-DETR detections inside the cashier crop."""
         n = 0
