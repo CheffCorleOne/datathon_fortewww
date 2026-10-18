@@ -1,0 +1,36 @@
+[project]
+name = "cashdesk-guard"
+version = "0.1.0"
+description = "Local AI service that flags visible cash-desk discipline violations in CCTV video"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "pydantic>=2.7",
+    "httpx>=0.27",
+    "numpy>=1.26",
+    "av>=12.0",
+    "opencv-python-headless>=4.10",
+    "pillow>=10.3",
+    "openpyxl>=3.1",
+    "torch>=2.7",
+    "torchvision>=0.22",
+    "transformers>=4.50",
+    "accelerate>=1.0",
+    "supervision>=0.25",
+    "rtmlib>=0.0.13",
+    "onnxruntime-gpu>=1.20",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu128" }]
+torchvision = [{ index = "pytorch-cu128" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true

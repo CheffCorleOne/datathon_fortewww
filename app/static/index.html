@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Контроль кассовой дисциплины</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="top">
+    <div class="wrap">
+      <h1>Контроль кассовой дисциплины по видео</h1>
+      <p class="sub">Сервис ищет визуально наблюдаемые признаки возможных нарушений. Результат — подсказка для проверяющего, а не заключение.</p>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="card" id="upload-card">
+      <form id="upload-form">
+        <label class="drop" id="drop">
+          <input type="file" id="file" accept=".mov,.mp4,video/*" hidden>
+          <span class="drop-title">Перетащите видео сюда или нажмите, чтобы выбрать</span>
+          <span class="drop-hint">.mov, до 300 МБ. Обработка занимает до нескольких минут.</span>
+          <span class="drop-file" id="file-name"></span>
+        </label>
+        <button type="submit" id="submit" disabled>Проверить видео</button>
+      </form>
+    </section>
+
+    <section class="card hidden" id="status-card">
+      <div class="status-row">
+        <div class="spinner" id="spinner"></div>
+        <div>
+          <div id="status-text">Загрузка…</div>
+          <div class="muted" id="status-sub"></div>
+        </div>
+      </div>
+      <div class="bar"><div class="bar-fill" id="bar"></div></div>
+    </section>
+
+    <section class="hidden" id="result">
+      <div class="verdict" id="verdict"></div>
+      <div class="player card hidden" id="player-card">
+        <video id="player" controls muted playsinline></video>
+        <div class="timeline" id="timeline"></div>
+      </div>
+      <div id="violations"></div>
+      <details class="card raw">
+        <summary>JSON-ответ (как в API)</summary>
+        <pre id="raw"></pre>
+      </details>
+    </section>
+
+    <section class="card about">
+      <h2>Что проверяет сервис</h2>
+      <div id="rules" class="rules"></div>
+      <p class="muted small">Ссылки — на открытые нормативные акты Национального Банка РК (adilet.zan.kz). Сервис не делает выводов о том, что не видно на видео (корректность проводок, сверки, документов). Лица на кадрах размываются, распознавание личности не выполняется.</p>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

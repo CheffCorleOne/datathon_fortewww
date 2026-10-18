@@ -1,1 +1,19 @@
-﻿.claude/
+.claude/
+
+# Hackathon data must not leave this machine (public repo; FAQ #6)
+data/
+open.zip
+*.pdf
+*.mov
+*.mp4
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.env
+
+# Runtime artifacts
+runs/
+uploads/
+models/

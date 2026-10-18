@@ -1,0 +1,34 @@
+# Fully local deployment for the bank's internal network.
+# 1) docker compose up -d ollama && docker compose exec ollama ollama pull qwen3-vl:4b-instruct
+# 2) docker compose up -d app
+# After the model is pulled nothing in the stack needs internet access.
+services:
+  ollama:
+    image: ollama/ollama:0.40.5
+    volumes: ["ollama:/root/.ollama"]
+    environment:
+      - OLLAMA_KEEP_ALIVE=24h
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }]
+    restart: unless-stopped
+
+  app:
+    build: .
+    ports: ["8000:8000"]
+    env_file: .env
+    environment:
+      - OLLAMA_URL=http://ollama:11434
+    volumes:
+      - ./runs:/app/runs
+      - ./uploads:/app/uploads
+    depends_on: [ollama]
+    deploy:
+      resources:
+        reservations:
+          devices: [{ driver: nvidia, count: 1, capabilities: [gpu] }]
+    restart: unless-stopped
+
+volumes:
+  ollama:
