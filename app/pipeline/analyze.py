@@ -92,6 +92,7 @@ ENABLE_PHONE = False
 ENABLE_CLIENT_LEFT = True   # strict version: client gone >= 5 s, VLM and hands scan both see cash work
 ENABLE_ID_CHECK = False     # ID before cash (п. 19 пп. 1): on the open set 0 extra hits, 5 false alarms -> off
 ENABLE_SR = True            # Swin2SR x2 for the held-object and laptop close-ups
+ENABLE_POSE = True          # ViTPose wrists vs counting-machine zone around manual-count candidates
 MANUAL_MIN_WINDOWS = 2  # 2-window runs get confidence 0.74 (3+: >= 0.86); final cut via MANUAL_MIN_CONF
 MANUAL_MIN_CONF = 0.0
 
@@ -103,6 +104,9 @@ def warmup() -> None:
         if ENABLE_SR:
             from .enhance import SuperRes
             SuperRes.get()  # load once at startup, not inside the first jury request
+        if ENABLE_POSE:
+            from .pose import Pose
+            Pose.get()
         if vlm.available():
             vlm.ask([np.zeros((64, 64, 3), np.uint8)], "Reply with the word ok.", num_predict=3)
         _warm = True
@@ -387,6 +391,38 @@ def _held_object(clip: video.Clip, person_box, tc: float) -> tuple[str | None, t
     return (r.get("object") if isinstance(r, dict) else None), obj_box
 
 
+def _machine_touches(clip: video.Clip, sc: scene_mod.Scene, s: float, e: float) -> dict:
+    """Count frames where a cashier wrist is inside the (enlarged) counting-machine box:
+    4 s before the episode, during it, and 6 s after. Empty dict when there is no machine or no pose."""
+    machine = sc.landmarks.get("machine")
+    if machine is None or not ENABLE_POSE:
+        return {}
+    x1, y1, x2, y2 = machine
+    mw, mh = x2 - x1, y2 - y1
+    zone = (x1 - 0.25 * mw, y1 - 0.25 * mh, x2 + 0.25 * mw, y2 + 0.25 * mh)
+    idx, boxes = [], []
+    for i, t in enumerate(clip.times):
+        if s - 4.0 <= t <= e + 6.0:
+            b = sc.cashier_box(i)
+            if b is not None:
+                idx.append(i)
+                boxes.append(b)
+    if not idx:
+        return {}
+    try:
+        from .pose import Pose
+        wr = Pose.get().wrists([clip.frames[i] for i in idx], boxes)
+    except Exception as exc:  # noqa: BLE001 - pose is an extra signal, never a hard dependency
+        log.warning("pose failed: %s", exc)
+        return {}
+    out = {"before": 0, "during": 0, "after": 0}
+    for i, w in zip(idx, wr):
+        if any(sc_ > 0.4 and zone[0] <= x <= zone[2] and zone[1] <= y <= zone[3] for x, y, sc_ in w):
+            t = clip.times[i]
+            out["before" if t < s else "after" if t > e else "during"] += 1
+    return out
+
+
 def _from_hands(clip: video.Clip, sc: scene_mod.Scene, hands: list[dict], checks: list | None = None,
                 dets: list | None = None) -> list[Event]:
     dets = dets or [[] for _ in clip.frames]
@@ -417,6 +453,12 @@ def _from_hands(clip: video.Clip, sc: scene_mod.Scene, hands: list[dict], checks
                 obj_boxes[h["t"]] = ob
         checks.append({"check": "held_object", "t": mid["t"], "votes": votes})
         if votes and "banknotes" not in votes:
+            continue
+        # Hands + counting-machine zone (ViTPose wrists): notes taken out of the machine right before, or fed
+        # into it right after, mean normal processing, not a manual count.
+        touch = _machine_touches(clip, sc, t_start - 0.5, t_end + 0.5)
+        checks.append({"check": "machine_touch", "t": t_start, **touch})
+        if touch and (touch["after"] >= 3 or touch["before"] >= 10):
             continue
         t = mid["t"]
         score = min(0.95, 0.5 + 0.12 * len(run))
@@ -572,7 +614,10 @@ def _check_entry(clip, sc, e, checks) -> list[Event]:
     # already served (before >= 2) a moderate approach counts; with the cashier alone the newcomer must come
     # right next to her (a client sits across the desk, an intruder walks behind / beside the cashier).
     reach = 0.9 if e["before"] >= 2 else 0.55
-    if e["hold_end"] - e["t"] >= 3.0 and _someone_close_to_cashier(sc, e, reach=reach):
+    near = _closest_newcomer(sc, e, reach=reach) if e["hold_end"] - e["t"] >= 3.0 else None
+    if near is not None and not _is_real_person(clip, near, checks):
+        near = None  # reflection in the glass wall / someone behind the glass, not a person in the room
+    if near is not None:
         votes = []
         for dt in (1.0, 2.5):
             j = clip.index_at(e["t"] + dt)
@@ -588,6 +633,55 @@ def _check_entry(clip, sc, e, checks) -> list[Event]:
                 evidence_t=[e["t"], clip.times[i]], boxes={},
                 source="cv+vlm:third" if e["before"] >= 2 else "cv+vlm:zone"))
     return out
+
+
+REAL_SCHEMA = {"type": "object", "properties": {"where": {"type": "string", "enum": [
+    "inside_room", "reflection_in_glass", "behind_glass_other_room", "unclear"]}}, "required": ["where"]}
+REAL_PROMPT = ("Close-up of a person in a small bank cash room with glass walls and a glass door. Is this a real "
+               "person physically standing or sitting inside the room (solid, feet on the room floor), a reflection "
+               "in the glass (semi-transparent, overlaid on the background behind the glass, mirrored), or a person "
+               "behind the glass in another room? Reply in JSON.")
+
+
+def _closest_newcomer(sc, e, reach: float):
+    """(frame index, box) of the non-cashier person who comes closest to the cashier during the new level,
+    provided someone stays within `reach` body heights for >= 4 frames; else None."""
+    i1 = sc.t_index(e["hold_end"])
+    close, best = 0, None
+    for i in range(e["i"], i1 + 1):
+        cb = sc.cashier_box(i)
+        if cb is None:
+            continue
+        ch = cb[3] - cb[1]
+        cc = ((cb[0] + cb[2]) / 2, (cb[1] + cb[3]) / 2)
+        for d in sc.people[i]:
+            if d.box == cb:
+                continue
+            dc = ((d.box[0] + d.box[2]) / 2, (d.box[1] + d.box[3]) / 2)
+            dist = np.hypot(dc[0] - cc[0], dc[1] - cc[1]) / max(ch, 1.0)
+            if dist < reach:
+                close += 1
+                if best is None or dist < best[0]:
+                    best = (dist, i, d.box)
+                break
+    return (best[1], best[2]) if close >= 4 and best is not None else None
+
+
+def _is_real_person(clip, near, checks) -> bool:
+    """Ask the VLM, on an enhanced close-up of that exact person, whether they are really in the room."""
+    i, box = near
+    votes = []
+    for di in (0, int(FPS)):
+        j = min(len(clip.frames) - 1, i + di)
+        crop = _crop(clip.frames[j], box, pad=0.35, side=448, enhance=True)
+        try:
+            r = vlm.ask([crop], REAL_PROMPT, schema=REAL_SCHEMA, max_side=448, num_predict=20)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("reflection check failed: %s", exc)
+            r = {}
+        votes.append(r.get("where") if isinstance(r, dict) else None)
+    checks.append({"check": "real_person", "t": clip.times[i], "votes": votes})
+    return "inside_room" in votes and not any(v in ("reflection_in_glass", "behind_glass_other_room") for v in votes)
 
 
 def _someone_close_to_cashier(sc, e, reach: float = 0.9) -> bool:
