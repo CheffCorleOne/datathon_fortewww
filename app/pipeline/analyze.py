@@ -566,13 +566,15 @@ def _check_left(clip, sc, e, checks) -> list[Event]:
     img = clip.frames[i_check]
     if sc.laptop is not None:
         i_late = min(len(clip.frames) - 1, e["i"] + int(3.0 * FPS))
-        votes = []
+        screens = []
         for i in sorted({i_check, i_late}):
             r = vlm.ask([_crop(clip.frames[i], sc.laptop, pad=0.4, side=512, enhance=True)], LAPTOP_PROMPT, schema=LAPTOP_SCHEMA,
                         max_side=512, num_predict=30)
             checks.append({"check": "laptop", "t": clip.times[i], "r": r})
-            votes.append(isinstance(r, dict) and r.get("screen") == "app")
-        if votes and all(votes):
+            screens.append(r.get("screen") if isinstance(r, dict) else None)
+        # "desktop" alone is not enough (the lock-screen photo reads as desktop on clean X-23/X-29),
+        # but app + desktop is still an unlocked screen (X-22 after super-resolution).
+        if "app" in screens and all(s in ("app", "desktop") for s in screens):
             lb = sc.laptop
             out.append(Event(
                 type="pc_unlocked", t=t_dep, t_start=t_dep, t_end=t_check, score=0.7,
