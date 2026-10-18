@@ -3,21 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Касса под контролем — проверка кассовой дисциплины</title>
-  <meta name="description" content="Локальный AI-сервис: находит на видео признаки нарушений кассовой дисциплины и показывает кадр, таймкод и пункт норматива РК.">
+  <title>Касса под контролем — ForteBank</title>
+  <meta name="description" content="Локальный AI-сервис ForteBank Datathon 26: находит на видео признаки нарушений кассовой дисциплины и показывает кадр, таймкод и пункт норматива РК.">
+  <link rel="icon" href="/static/forte-mark.svg" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
   <a class="skip" href="#check">Перейти к проверке</a>
 
-  <header class="hero">
-    <nav class="nav" aria-label="Основная навигация">
-      <a class="brand" href="/" aria-label="На главную">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>
-        <span>Касса под контролем</span>
+  <header class="topbar">
+    <nav class="wrap topbar-inner" aria-label="Основная навигация">
+      <a class="brand" href="/" aria-label="ForteBank — на главную">
+        <img src="/static/forte-logo.svg" alt="ForteBank" width="84" height="25">
+        <span class="brand-sep" aria-hidden="true"></span>
+        <span class="brand-product">Касса под контролем</span>
       </a>
       <div class="nav-links">
         <a href="#check">Проверка</a>
@@ -28,27 +30,30 @@
         <i class="dot"></i>Локально
       </span>
     </nav>
+  </header>
 
-    <div class="hero-inner">
-      <p class="eyebrow">ForteBank · Datathon 26</p>
-      <h1>Касса<br>под контролем.</h1>
-      <p class="lead">Загрузите запись с камеры кассы. Сервис найдёт визуальные признаки возможных нарушений и покажет кадр, таймкод и пункт норматива Национального Банка РК.</p>
-      <div class="hero-actions">
-        <a class="cta" href="#check">
-          Проверить видео
-          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-        </a>
-        <a class="ghost" href="#norms">Что проверяется</a>
+  <main class="wrap">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-text">
+        <p class="eyebrow">ForteBank · Datathon 26</p>
+        <h1 id="hero-title">Касса под&nbsp;контролем.</h1>
+        <p class="lead">Загрузите запись с камеры кассы. Сервис найдёт визуальные признаки возможных нарушений и покажет кадр, таймкод и пункт норматива Национального Банка РК.</p>
+        <div class="hero-actions">
+          <a class="cta" href="#check">
+            Проверить видео
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+          </a>
+          <a class="ghost" href="#norms">Что проверяется</a>
+        </div>
       </div>
+      <img class="hero-mark" src="/static/forte-mark.svg" alt="" aria-hidden="true">
       <dl class="stats">
         <div><dt>12</dt><dd>правил РК</dd></div>
         <div><dt>~40 с</dt><dd>на видео</dd></div>
         <div><dt>0</dt><dd>облачных API</dd></div>
       </dl>
-    </div>
-  </header>
+    </section>
 
-  <main class="sheet">
     <section id="check" class="section" aria-labelledby="check-title">
       <div class="section-head">
         <h2 id="check-title">Проверка записи</h2>
@@ -136,7 +141,7 @@ curl <span class="host"></span>/api/v1/jobs/&lt;job_id&gt; -H "X-API-Key: &lt;к
     </section>
 
     <footer class="footer">
-      <span>Касса под контролем · ForteBank Datathon 26</span>
+      <span><img src="/static/forte-logo.svg" alt="ForteBank" width="60" height="18"> · Datathon 26 · Касса под контролем</span>
       <span class="muted">RT-DETRv2 · Qwen3-VL-4B · всё локально</span>
     </footer>
   </main>
