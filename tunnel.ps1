@@ -9,7 +9,7 @@ Set-Location $PSScriptRoot
 if ($Ngrok) {
     $domain = ((Get-Content .env | Select-String "^NGROK_DOMAIN=").Line -split "=", 2)[1]
     while ($true) {
-        ngrok http --url=$domain "127.0.0.1:$Port"
+        ngrok http --domain=$domain "127.0.0.1:$Port"
         Write-Host "ngrok exited, restarting in 3 s..."
         Start-Sleep -Seconds 3
     }
