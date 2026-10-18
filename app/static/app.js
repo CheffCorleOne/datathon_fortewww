@@ -45,7 +45,8 @@ $("upload-form").addEventListener("submit", async (ev) => {
   $("status-card").classList.remove("hidden");
   $("spinner").classList.remove("hidden");
   $("submit").disabled = true;
-  setStatus("Загрузка видео на сервер…", "", 0.02);
+  setStatus("Загрузка видео на сервер…", "", 0.02, "queued");
+  $("status-card").scrollIntoView({ behavior: "smooth", block: "center" });
 
   const fd = new FormData();
   fd.append("file", file);
@@ -60,10 +61,18 @@ $("upload-form").addEventListener("submit", async (ev) => {
   }
 });
 
-function setStatus(text, sub, frac) {
+const STEP_OF = { queued: 0, starting: 0, decoding: 0, detecting: 1, tracking: 1, verifying: 2, events: 2, report: 3 };
+
+function setStatus(text, sub, frac, stage) {
   $("status-text").textContent = text;
   $("status-sub").textContent = sub || "";
   $("bar").style.width = `${Math.round((frac || 0) * 100)}%`;
+  const cur = stage in STEP_OF ? STEP_OF[stage] : -1;
+  document.querySelectorAll("#steps li").forEach((li) => {
+    const n = +li.dataset.step;
+    li.classList.toggle("done", cur > n);
+    li.classList.toggle("active", cur === n);
+  });
 }
 function fail(msg) {
   setStatus(msg, "Попробуйте ещё раз или выберите другой файл.", 0);
@@ -80,7 +89,7 @@ async function poll(id, t0) {
     if (j.status === "failed") return fail(`Ошибка обработки: ${j.error || "неизвестно"}`);
     const secs = Math.round((Date.now() - t0) / 1000);
     const q = j.queue_position > 1 ? ` · в очереди: ${j.queue_position}` : "";
-    setStatus(STAGES[j.stage] || "Обработка…", `Задача ${id} · ${secs} с${q}`, j.progress);
+    setStatus(STAGES[j.stage] || "Обработка…", `Задача ${id} · ${secs} с${q}`, j.progress, j.stage);
   } catch (e) { /* transient; keep polling */ }
   setTimeout(() => poll(id, t0), 1500);
 }
@@ -94,6 +103,7 @@ function render(j) {
   v.className = `verdict ${bad ? "bad" : "ok"}`;
   v.innerHTML = (bad ? `Обнаружены признаки возможных нарушений: ${j.violations.length}` : "Нарушение не обнаружено") +
     `<span class="meta">${esc(j.filename || "")} · длительность ${fmt(j.video?.duration_sec || 0)} · обработано за ${j.processing_time_sec} с</span>`;
+  requestAnimationFrame(() => v.scrollIntoView({ behavior: "smooth", block: "start" }));
 
   const player = $("player");
   player.src = videoURL || `/ui/jobs/${j.job_id}/video`;
@@ -116,7 +126,7 @@ function render(j) {
     const frames = x.evidence_frames.map((f) =>
       `<figure><img src="data:image/jpeg;base64,${f.image_base64}" alt="кадр ${f.timestamp_sec} с"><figcaption>кадр на ${fmt(f.timestamp_sec)}</figcaption></figure>`).join("");
     return `<article class="card viol">
-      <h3><span class="tc" data-t="${x.timecode_sec}">${fmt(x.timecode_sec)}</span>${i + 1}. ${esc(x.type)}</h3>
+      <h3><button type="button" class="tc" data-t="${x.timecode_sec}" aria-label="Перейти к ${fmt(x.timecode_sec)}">${fmt(x.timecode_sec)}</button>${esc(x.type)}</h3>
       <div class="muted small">Интервал ${fmt(x.interval_sec?.[0] ?? x.timecode_sec)}–${fmt(x.interval_sec?.[1] ?? x.timecode_sec)} · уверенность ${Math.round((x.confidence ?? 0) * 100)}%</div>
       <p class="desc">${esc(x.description)}</p>
       <div class="frames">${frames}</div>
@@ -153,7 +163,10 @@ if (initialJob && /^[a-z0-9]+$/i.test(initialJob)) {
   poll(initialJob, Date.now());
 }
 
+document.querySelectorAll(".host").forEach((el) => (el.textContent = location.origin));
+
+const SHORT = (doc) => (doc.includes("№ 231") ? "Правила № 231" : doc.includes("№ 14") ? "Правила № 14" : doc.includes("№ 53") ? "Требования № 53" : "");
 fetch("/ui/rules").then((r) => r.json()).then((rules) => {
   $("rules").innerHTML = rules.filter((r) => r.code !== "other").map((r) =>
-    `<div class="r"><b>${esc(r.title)}</b>${esc(r.clause)}</div>`).join("");
+    `<div class="r"><b>${esc(r.title)}</b>${esc(SHORT(r.document))} · ${esc(r.clause)}</div>`).join("");
 }).catch(() => {});

@@ -31,7 +31,7 @@ HANDS_SCHEMA = {
     "type": "object",
     "properties": {
         "in_hands": {"type": "string",
-                     "enum": ["banknotes", "phone", "card_or_document", "cup_or_food", "nothing", "other"]},
+                     "enum": ["banknotes", "id_card", "phone", "card_or_document", "cup_or_food", "nothing", "other"]},
         "flipping_through_notes": {"type": "boolean"},
     },
     "required": ["in_hands", "flipping_through_notes"],
@@ -39,7 +39,8 @@ HANDS_SCHEMA = {
 HANDS_PROMPT = (
     "These are {n} consecutive video frames (0.5 s apart) of a bank cashier. What is in the cashier's hands? "
     "Note: tenge banknotes are rectangular paper notes in blue, green, brown or pink colours, often held as a "
-    "small fan or stack; a phone is a single thick dark/black slab with a screen. Reply in JSON.")
+    "small fan or stack; id_card = a single identity card with a small face photo, or a passport; a phone is a "
+    "single thick dark/black slab with a screen. Reply in JSON.")
 
 LAPTOP_SCHEMA = {"type": "object", "properties": {"screen": {"type": "string", "enum": ["lock", "off", "desktop", "app"]}},
                  "required": ["screen"]}
@@ -88,8 +89,10 @@ THIRD_PROMPT = ("Bank cash room. A person has just entered while the cashier is 
 _warm = False
 # Detectors with no positive training examples and many false alarms on the open set stay off.
 ENABLE_PHONE = False
-ENABLE_CLIENT_LEFT = False
-MANUAL_MIN_WINDOWS = 3  # chosen on the open set: >=3 windows gave 67.5% vs 62.5% verdict accuracy with 2
+ENABLE_CLIENT_LEFT = True   # strict version: client gone >= 5 s, VLM and hands scan both see cash work
+ENABLE_ID_CHECK = True      # identity document before the first banknotes of a client visit (п. 19 пп. 1)
+MANUAL_MIN_WINDOWS = 2  # 2-window runs get confidence 0.74 (3+: >= 0.86); final cut via MANUAL_MIN_CONF
+MANUAL_MIN_CONF = 0.0
 
 
 def warmup() -> None:
@@ -403,6 +406,8 @@ def _from_hands(clip: video.Clip, sc: scene_mod.Scene, hands: list[dict], checks
             continue
         t = mid["t"]
         score = min(0.95, 0.5 + 0.12 * len(run))
+        if score < MANUAL_MIN_CONF:
+            continue
         ev.append(Event(
             type="manual_count", t=t, t_start=run[0]["t"] - 0.5, t_end=t_end + 0.5, score=score,
             observation="Кассир пересчитывает банкноты вручную, перелистывая купюры пальцами; счётно-сортировальная "
@@ -491,6 +496,8 @@ def _event_checks(clip, sc, dets, hands, debug) -> list[Event]:
         except Exception as exc:  # noqa: BLE001
             log.warning("check %s failed: %s", e, exc)
     ev += _check_personal_items(clip, sc, dets, checks)
+    if ENABLE_ID_CHECK:
+        ev += _check_id_before_cash(clip, sc, hands, checks)
     debug["checks"] = checks
     return ev
 
@@ -547,23 +554,30 @@ def _check_entry(clip, sc, e, checks) -> list[Event]:
             type="cash_on_desk", t=e["t"], t_start=e["t"], t_end=clip.times[i], score=0.6,
             observation="В кассу входит следующий посетитель, а на столе кассира открыто лежат наличные.",
             evidence_t=[e["t"], clip.times[i]], boxes={}, source="cv+vlm"))
-    if e["before"] >= 2 and e["hold_end"] - e["t"] >= 3.0 and _someone_close_to_cashier(sc, e):
+    # "Three people" is not "an outsider": what matters is someone entering the cashier's zone. With a client
+    # already served (before >= 2) a moderate approach counts; with the cashier alone the newcomer must come
+    # right next to her (a client sits across the desk, an intruder walks behind / beside the cashier).
+    reach = 0.9 if e["before"] >= 2 else 0.55
+    if e["hold_end"] - e["t"] >= 3.0 and _someone_close_to_cashier(sc, e, reach=reach):
         votes = []
         for dt in (1.0, 2.5):
             j = clip.index_at(e["t"] + dt)
             r = vlm.ask([clip.frames[j]], THIRD_PROMPT, schema=THIRD_SCHEMA, max_side=960, num_predict=20)
-            checks.append({"check": "third_person", "t": clip.times[j], "r": r})
+            checks.append({"check": "third_person", "t": clip.times[j], "r": r, "before": e["before"]})
             votes.append(isinstance(r, dict) and bool(r.get("person_on_cashier_side")))
         if all(votes):
             out.append(Event(
                 type="unauthorized_person", t=e["t"], t_start=e["t"], t_end=e["hold_end"], score=0.55,
-                observation="Во время обслуживания клиента в кассу входит ещё один человек и подходит к кассиру.",
-                evidence_t=[e["t"], clip.times[i]], boxes={}, source="cv+vlm"))
+                observation=("Во время обслуживания клиента в кассу входит ещё один человек и подходит к кассиру."
+                             if e["before"] >= 2 else
+                             "В кассу входит человек и проходит в зону кассира, к рабочему месту за столом."),
+                evidence_t=[e["t"], clip.times[i]], boxes={},
+                source="cv+vlm:third" if e["before"] >= 2 else "cv+vlm:zone"))
     return out
 
 
-def _someone_close_to_cashier(sc, e) -> bool:
-    """During the new head-count level, does any non-cashier person come within reach of the cashier?"""
+def _someone_close_to_cashier(sc, e, reach: float = 0.9) -> bool:
+    """During the new head-count level, does any non-cashier person come within `reach` body heights of her?"""
     i1 = sc.t_index(e["hold_end"])
     close = 0
     for i in range(e["i"], i1 + 1):
@@ -576,7 +590,7 @@ def _someone_close_to_cashier(sc, e) -> bool:
             if d.box == cb:
                 continue
             dc = ((d.box[0] + d.box[2]) / 2, (d.box[1] + d.box[3]) / 2)
-            if np.hypot(dc[0] - cc[0], dc[1] - cc[1]) < 0.9 * ch:
+            if np.hypot(dc[0] - cc[0], dc[1] - cc[1]) < reach * ch:
                 close += 1
                 break
     return close >= 4
@@ -622,8 +636,8 @@ AFTER_PROMPT = ("{n} frames in time order of a bank cashier at her desk; the bla
 
 
 def _check_client_left(clip, sc, e, hands, checks) -> list[Event]:
-    if e["hold_end"] - e["t"] < 3.0 or e["t"] > clip.duration - 2.0:
-        return []  # short dip in the people count, not a real departure
+    if e["hold_end"] - e["t"] < 5.0 or e["t"] > clip.duration - 3.0:
+        return []  # short dip in the people count (reflections, someone passing), not a real departure
     i0 = clip.index_at(e["t"] + 1.0)
     box = sc.cashier_box(i0)
     if box is None:
@@ -637,12 +651,73 @@ def _check_client_left(clip, sc, e, hands, checks) -> list[Event]:
     busy = [h for h in after if h.get("banknotes_in_hands")]
     vlm_busy = isinstance(r, dict) and bool(r.get("cashier_handling_cash"))
     checks.append({"check": "client_left", "t": e["t"], "busy": len(busy), "vlm": r})
-    if vlm_busy and busy:
+    if vlm_busy and len(busy) >= 2:
         return [Event(
             type="count_without_client", t=busy[0]["t"], t_start=e["t"], t_end=busy[-1]["t"], score=0.55,
             observation="Посетитель уходит от кассы, а кассир продолжает операцию с наличными без него.",
             evidence_t=[e["t"], busy[0]["t"]], boxes={busy[0]["t"]: _box_list(busy[0].get("box"))}, source="cv+vlm")]
     return []
+
+
+ID_CLASSES = ("id_card", "card_or_document")  # an ID card is a card: count both as "document shown"
+ID_LOOKBACK_SEC = 30.0                          # ID usually shown shortly before the cash, sometimes at once
+ID_LOOKAHEAD_SEC = 3.0
+
+
+def _client_next_to_cashier(sc, t0: float, t1: float) -> bool:
+    """Is a second person (the client) at the desk with the cashier for most of [t0, t1]?"""
+    i0, i1 = sc.t_index(t0), sc.t_index(t1)
+    near = total = 0
+    for i in range(i0, i1 + 1):
+        cb = sc.cashier_box(i)
+        if cb is None:
+            continue
+        total += 1
+        ch = cb[3] - cb[1]
+        cc = ((cb[0] + cb[2]) / 2, (cb[1] + cb[3]) / 2)
+        for d in sc.people[i]:
+            if d.box == cb:
+                continue
+            dc = ((d.box[0] + d.box[2]) / 2, (d.box[1] + d.box[3]) / 2)
+            if np.hypot(dc[0] - cc[0], dc[1] - cc[1]) < 1.3 * ch:
+                near += 1
+                break
+    return total > 0 and near / total >= 0.5
+
+
+def _check_id_before_cash(clip, sc, hands, checks) -> list[Event]:
+    """Each cash episode with a client should have an identity document shown around its start.
+
+    Time-based (not visit-based): visit boundaries from head counts are noisy (glass reflections), so for the
+    start of every cash episode we look for an ID/card in [start - 30 s, start + 3 s].
+    """
+    present = [h for h in hands if h.get("present")]
+    cash = [h for h in present if h.get("in_hands") == "banknotes"]
+    episodes: list[list[dict]] = []
+    for h in cash:
+        if episodes and h["t"] - episodes[-1][-1]["t"] <= 10.0:
+            episodes[-1].append(h)
+        else:
+            episodes.append([h])
+    out: list[Event] = []
+    for ep in episodes:
+        if len(ep) < 2:
+            continue  # a single glimpse of notes is not an operation
+        t_b = ep[0]["t"]
+        if not _client_next_to_cashier(sc, t_b - 2.0, ep[-1]["t"] + 1.0):
+            continue  # cashier alone (processing, packing): no client to identify
+        ids = [h for h in present if h.get("in_hands") in ID_CLASSES
+               and t_b - ID_LOOKBACK_SEC <= h["t"] <= t_b + ID_LOOKAHEAD_SEC]
+        checks.append({"check": "id_before_cash", "first_cash": t_b, "id_seen": [h["t"] for h in ids]})
+        if ids:
+            continue
+        out.append(Event(
+            type="no_id_check", t=t_b, t_start=max(0.0, t_b - ID_LOOKBACK_SEC), t_end=t_b, score=0.5,
+            observation="Начинается операция с наличными с клиентом; предъявление удостоверения личности "
+                        "в предшествующие 30 секунд на видео не зафиксировано.",
+            evidence_t=[t_b, max(0.0, t_b - 3.0)], boxes={t_b: _box_list(ep[0].get("box"))},
+            source="cv+vlm:id"))
+    return out
 
 
 def _check_personal_items(clip, sc, dets, checks) -> list[Event]:

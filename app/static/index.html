@@ -3,59 +3,142 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Контроль кассовой дисциплины</title>
+  <title>Касса под контролем — проверка кассовой дисциплины</title>
+  <meta name="description" content="Локальный AI-сервис: находит на видео признаки нарушений кассовой дисциплины и показывает кадр, таймкод и пункт норматива РК.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
-  <header class="top">
-    <div class="wrap">
-      <h1>Контроль кассовой дисциплины по видео</h1>
-      <p class="sub">Сервис ищет визуально наблюдаемые признаки возможных нарушений. Результат — подсказка для проверяющего, а не заключение.</p>
+  <a class="skip" href="#check">Перейти к проверке</a>
+
+  <header class="hero">
+    <nav class="nav" aria-label="Основная навигация">
+      <a class="brand" href="/" aria-label="На главную">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5l-8-3Z"/><path d="m8.5 12 2.5 2.5 4.5-5"/></svg>
+        <span>Касса под контролем</span>
+      </a>
+      <div class="nav-links">
+        <a href="#check">Проверка</a>
+        <a href="#norms">Правила</a>
+        <a href="#api">API</a>
+      </div>
+      <span class="nav-chip" title="Все модели работают на сервере банка, видео никуда не отправляется">
+        <i class="dot"></i>Локально
+      </span>
+    </nav>
+
+    <div class="hero-inner">
+      <p class="eyebrow">ForteBank · Datathon 26</p>
+      <h1>Касса<br>под контролем.</h1>
+      <p class="lead">Загрузите запись с камеры кассы. Сервис найдёт визуальные признаки возможных нарушений и покажет кадр, таймкод и пункт норматива Национального Банка РК.</p>
+      <div class="hero-actions">
+        <a class="cta" href="#check">
+          Проверить видео
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
+        </a>
+        <a class="ghost" href="#norms">Что проверяется</a>
+      </div>
+      <dl class="stats">
+        <div><dt>12</dt><dd>правил РК</dd></div>
+        <div><dt>~40 с</dt><dd>на видео</dd></div>
+        <div><dt>0</dt><dd>облачных API</dd></div>
+      </dl>
     </div>
   </header>
 
-  <main class="wrap">
-    <section class="card" id="upload-card">
-      <form id="upload-form">
-        <label class="drop" id="drop">
-          <input type="file" id="file" accept=".mov,.mp4,video/*" hidden>
-          <span class="drop-title">Перетащите видео сюда или нажмите, чтобы выбрать</span>
-          <span class="drop-hint">.mov, до 300 МБ. Обработка занимает до нескольких минут.</span>
-          <span class="drop-file" id="file-name"></span>
-        </label>
-        <button type="submit" id="submit" disabled>Проверить видео</button>
-      </form>
-    </section>
+  <main class="sheet">
+    <section id="check" class="section" aria-labelledby="check-title">
+      <div class="section-head">
+        <h2 id="check-title">Проверка записи</h2>
+        <p class="muted">Результат — подсказка проверяющему, а не юридическое заключение.</p>
+      </div>
 
-    <section class="card hidden" id="status-card">
-      <div class="status-row">
-        <div class="spinner" id="spinner"></div>
-        <div>
-          <div id="status-text">Загрузка…</div>
-          <div class="muted" id="status-sub"></div>
+      <div class="upload-grid">
+        <form id="upload-form" class="card upload">
+          <label class="drop" id="drop" for="file">
+            <input type="file" id="file" accept=".mov,.mp4,video/*" hidden>
+            <span class="drop-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 16v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>
+            </span>
+            <span class="drop-title">Перетащите видео или нажмите, чтобы выбрать</span>
+            <span class="drop-hint">.mov или .mp4 до 300 МБ · обработка до нескольких минут</span>
+            <span class="drop-file" id="file-name" aria-live="polite"></span>
+          </label>
+          <button type="submit" id="submit" class="btn" disabled>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3v18l15-9L5 3Z"/></svg>
+            Проверить видео
+          </button>
+        </form>
+
+        <ol class="card how" aria-label="Как это работает">
+          <li><span>1</span><div><b>Видео → кадры</b><p>4 кадра в секунду, точные таймкоды</p></div></li>
+          <li><span>2</span><div><b>Люди и предметы</b><p>Детектор RT-DETR: кассир, клиенты, ноутбук, сумки</p></div></li>
+          <li><span>3</span><div><b>Узкие вопросы к VLM</b><p>Qwen3-VL смотрит на увеличенные фрагменты: что в руках, что на столе, экран, дверь</p></div></li>
+          <li><span>4</span><div><b>Правило и норма</b><p>Таймкод, 1–3 кадра с размытыми лицами, пункт норматива</p></div></li>
+        </ol>
+      </div>
+
+      <section class="card status hidden" id="status-card" aria-live="polite">
+        <div class="status-row">
+          <div class="spinner" id="spinner" aria-hidden="true"></div>
+          <div>
+            <div class="status-text" id="status-text">Загрузка…</div>
+            <div class="muted small" id="status-sub"></div>
+          </div>
         </div>
-      </div>
-      <div class="bar"><div class="bar-fill" id="bar"></div></div>
+        <div class="bar"><div class="bar-fill" id="bar"></div></div>
+        <ol class="steps" id="steps">
+          <li data-step="0">Чтение видео</li>
+          <li data-step="1">Люди и предметы</li>
+          <li data-step="2">Проверка моделью</li>
+          <li data-step="3">Отчёт</li>
+        </ol>
+      </section>
+
+      <section class="hidden" id="result" aria-live="polite">
+        <div class="verdict" id="verdict"></div>
+        <div class="card player hidden" id="player-card">
+          <video id="player" controls muted playsinline></video>
+          <div class="timeline" id="timeline" aria-label="Отметки нарушений на шкале времени"></div>
+        </div>
+        <div id="violations" class="violations"></div>
+        <details class="card raw">
+          <summary>JSON-ответ (как в API)</summary>
+          <pre id="raw"></pre>
+        </details>
+      </section>
     </section>
 
-    <section class="hidden" id="result">
-      <div class="verdict" id="verdict"></div>
-      <div class="player card hidden" id="player-card">
-        <video id="player" controls muted playsinline></video>
-        <div class="timeline" id="timeline"></div>
+    <section id="norms" class="section" aria-labelledby="rules-title">
+      <div class="section-head">
+        <h2 id="rules-title">Что проверяется</h2>
+        <p class="muted">Только открытые акты РК: Правила № 231 и № 14 НБРК, Требования № 53 АРРФР.</p>
       </div>
-      <div id="violations"></div>
-      <details class="card raw">
-        <summary>JSON-ответ (как в API)</summary>
-        <pre id="raw"></pre>
-      </details>
-    </section>
-
-    <section class="card about">
-      <h2>Что проверяет сервис</h2>
       <div id="rules" class="rules"></div>
-      <p class="muted small">Ссылки — на открытые нормативные акты Национального Банка РК (adilet.zan.kz). Сервис не делает выводов о том, что не видно на видео (корректность проводок, сверки, документов). Лица на кадрах размываются, распознавание личности не выполняется.</p>
+      <p class="muted small note">По видео не оцениваются проводки, сверка и документы. Лица на кадрах размываются, распознавание личности не выполняется.</p>
     </section>
+
+    <section id="api" class="section" aria-labelledby="api-title">
+      <div class="section-head">
+        <h2 id="api-title">API для интеграции</h2>
+        <p class="muted">Ключ передаётся в заголовке <code>X-API-Key</code>. Обработка асинхронная.</p>
+      </div>
+      <div class="card code">
+<pre><span class="c"># 1. Загрузить видео → job_id</span>
+curl -X POST <span class="host"></span>/api/v1/analyze \
+  -H "X-API-Key: &lt;ключ&gt;" -F "file=@video.mov"
+
+<span class="c"># 2. Получить статус и результат</span>
+curl <span class="host"></span>/api/v1/jobs/&lt;job_id&gt; -H "X-API-Key: &lt;ключ&gt;"</pre>
+      </div>
+    </section>
+
+    <footer class="footer">
+      <span>Касса под контролем · ForteBank Datathon 26</span>
+      <span class="muted">RT-DETRv2 · Qwen3-VL-4B · всё локально</span>
+    </footer>
   </main>
 
   <script src="/static/app.js"></script>

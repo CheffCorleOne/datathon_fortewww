@@ -20,6 +20,7 @@ def main() -> None:
     ap.add_argument("--min-conf", type=float, default=0.0)
     ap.add_argument("--tol", type=float, default=3.0)
     ap.add_argument("--type-min", nargs="*", default=[], help="type=min_conf pairs, e.g. manual_count=0.9")
+    ap.add_argument("--drop-source", nargs="*", default=[], help="drop events whose detected_by contains this")
     args = ap.parse_args()
     type_min = {k: float(v) for k, v in (x.split("=") for x in args.type_min)}
     rows = list(csv.DictReader((ROOT / "runs" / f"eval_{args.tag}.csv").open(encoding="utf-8")))
@@ -30,7 +31,8 @@ def main() -> None:
         times = json.loads(r["gt_times"])
         evs = [e for e in json.loads(r["events"])
                if e["type_code"] not in args.drop and (e.get("confidence") or 0) >= args.min_conf
-               and (e.get("confidence") or 0) >= type_min.get(e["type_code"], 0.0)]
+               and (e.get("confidence") or 0) >= type_min.get(e["type_code"], 0.0)
+               and not any(s in (e.get("detected_by") or "") for s in args.drop_source)]
         pred = bool(evs)
         for e in evs:
             (per_type_tp if gt else per_type_fp)[e["type_code"]] += 1

@@ -108,7 +108,8 @@ def main() -> None:
               f"pred={'V' if pred else '-'} dt={[round(h, 1) if h is not None else None for h in hits]} "
               f"[{took:5.1f}s] {ev_txt}", flush=True)
         rows.append({"id": vid, "gt": lab["violation"], "gt_times": json.dumps(lab["times"]), "pred": int(pred),
-                     "events": json.dumps([{k: e.get(k) for k in ("timecode_sec", "type_code", "confidence")} for e in evs]),
+                     "events": json.dumps([{k: e.get(k) for k in ("timecode_sec", "type_code", "confidence", "detected_by")}
+                                           for e in evs]),
                      "dt": json.dumps(hits), "sec": round(took, 1),
                      "status": res.get("status", "done")})
 
