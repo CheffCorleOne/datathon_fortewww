@@ -11,8 +11,8 @@ RUN pip install --no-cache-dir "fastapi>=0.115" "uvicorn[standard]>=0.30" "pytho
 COPY app ./app
 
 # Pre-fetch model weights at build time so the container needs no internet at runtime.
-RUN python -c "from transformers import AutoImageProcessor, AutoModelForObjectDetection as M; \
-m='PekingU/rtdetr_v2_r50vd'; AutoImageProcessor.from_pretrained(m); M.from_pretrained(m)" && \
+RUN python -c "from huggingface_hub import snapshot_download as d; \
+[d(m) for m in ('PekingU/rtdetr_v2_r50vd', 'caidas/swin2SR-classical-sr-x2-64', 'usyd-community/vitpose-base-simple')]" && \
     python -c "from app.pipeline.faces import ensure_model; ensure_model()"
 
 ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1
