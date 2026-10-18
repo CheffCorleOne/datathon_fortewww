@@ -90,7 +90,8 @@ _warm = False
 # Detectors with no positive training examples and many false alarms on the open set stay off.
 ENABLE_PHONE = False
 ENABLE_CLIENT_LEFT = True   # strict version: client gone >= 5 s, VLM and hands scan both see cash work
-ENABLE_ID_CHECK = True      # identity document before the first banknotes of a client visit (п. 19 пп. 1)
+ENABLE_ID_CHECK = False     # ID before cash (п. 19 пп. 1): on the open set 0 extra hits, 5 false alarms -> off
+ENABLE_SR = True            # Swin2SR x2 for the held-object and laptop close-ups
 MANUAL_MIN_WINDOWS = 2  # 2-window runs get confidence 0.74 (3+: >= 0.86); final cut via MANUAL_MIN_CONF
 MANUAL_MIN_CONF = 0.0
 
@@ -99,6 +100,9 @@ def warmup() -> None:
     global _warm
     try:
         Detector.get()
+        if ENABLE_SR:
+            from .enhance import SuperRes
+            SuperRes.get()  # load once at startup, not inside the first jury request
         if vlm.available():
             vlm.ask([np.zeros((64, 64, 3), np.uint8)], "Reply with the word ok.", num_predict=3)
         _warm = True
@@ -108,7 +112,13 @@ def warmup() -> None:
 
 # ---------------------------------------------------------------- crops
 
-def _crop(img: np.ndarray, box, pad: float = 0.2, side: int = 640, pad_y: float | None = None) -> np.ndarray:
+def _crop(img: np.ndarray, box, pad: float = 0.2, side: int = 640, pad_y: float | None = None,
+          enhance: bool = False) -> np.ndarray:
+    """Cut `box` (+padding) and scale its long side to `side`.
+
+    enhance=True routes the enlargement through the super-resolution middleware (enhance.py) instead of
+    bicubic interpolation — used for the close-ups where fine detail decides the answer.
+    """
     h, w = img.shape[:2]
     x1, y1, x2, y2 = box
     bw, bh = x2 - x1, y2 - y1
@@ -119,7 +129,11 @@ def _crop(img: np.ndarray, box, pad: float = 0.2, side: int = 640, pad_y: float 
         return img
     c = img[y1:y2, x1:x2]
     s = side / max(c.shape[:2])
-    return cv2.resize(c, (max(1, int(c.shape[1] * s)), max(1, int(c.shape[0] * s))), interpolation=cv2.INTER_CUBIC)
+    size = (max(1, int(c.shape[1] * s)), max(1, int(c.shape[0] * s)))
+    if enhance and ENABLE_SR:
+        from .enhance import upscale
+        return upscale(c, size)
+    return cv2.resize(c, size, interpolation=cv2.INTER_CUBIC)
 
 
 def _union(boxes):
@@ -364,7 +378,7 @@ def _held_object(clip: video.Clip, person_box, tc: float) -> tuple[str | None, t
         log.warning("held-object grounding failed: %s", exc)
     box = obj_box or person_box
     pad = 0.6 if obj_box else 0.0
-    crops = [_crop(clip.frames[clip.index_at(tc + d)], box, pad=pad, side=448) for d in (-0.5, 0.0, 0.5)]
+    crops = [_crop(clip.frames[clip.index_at(tc + d)], box, pad=pad, side=448, enhance=True) for d in (-0.5, 0.0, 0.5)]
     try:
         r = vlm.ask(crops, HELD_PROMPT, schema=HELD_SCHEMA, max_side=448, num_predict=20)
     except Exception as exc:  # noqa: BLE001
@@ -512,7 +526,7 @@ def _check_left(clip, sc, e, checks) -> list[Event]:
         i_late = min(len(clip.frames) - 1, e["i"] + int(3.0 * FPS))
         votes = []
         for i in sorted({i_check, i_late}):
-            r = vlm.ask([_crop(clip.frames[i], sc.laptop, pad=0.4, side=512)], LAPTOP_PROMPT, schema=LAPTOP_SCHEMA,
+            r = vlm.ask([_crop(clip.frames[i], sc.laptop, pad=0.4, side=512, enhance=True)], LAPTOP_PROMPT, schema=LAPTOP_SCHEMA,
                         max_side=512, num_predict=30)
             checks.append({"check": "laptop", "t": clip.times[i], "r": r})
             votes.append(isinstance(r, dict) and r.get("screen") == "app")
