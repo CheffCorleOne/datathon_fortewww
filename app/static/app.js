@@ -156,6 +156,9 @@ function lightbox(src) {
   document.body.appendChild(d);
 }
 
+// ?redact=1 blurs the video and evidence frames (for public screenshots of the UI)
+if (new URLSearchParams(location.search).get("redact")) document.body.classList.add("redact");
+
 const initialJob = new URLSearchParams(location.search).get("job");
 if (initialJob && /^[a-z0-9]+$/i.test(initialJob)) {
   $("status-card").classList.remove("hidden");
